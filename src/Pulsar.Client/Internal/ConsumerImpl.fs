@@ -624,6 +624,7 @@ type internal ConsumerImpl<'T> (consumerConfig: ConsumerConfiguration<'T>, clien
                 Error ex
 
     let discardCorruptedMessage (msgId: MessageId) (clientCnx: ClientCnx) err =
+        increaseAvailablePermits 1
         backgroundTask {
             let command = Commands.newAck consumerId msgId.LedgerId msgId.EntryId Individual
                             EmptyProperties null (Some err) None None None

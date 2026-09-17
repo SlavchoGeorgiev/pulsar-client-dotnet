@@ -124,6 +124,56 @@ let consumeMessagesAndCheckEncryption (consumer: IConsumer<byte[]>) number consu
 [<Tests>]
 let tests =
     testList "MessageCrypto" [
+        testTask "Discarded undecryptable messages return flow permits" {
+            Log.Debug("Started Discarded undecryptable messages return flow permits")
+            let client = getClient ()
+            let topicName = "public/default/topic-" + Guid.NewGuid().ToString("N")
+
+            let! (consumer : IConsumer<byte[]>) =
+                client.NewConsumer()
+                    .Topic(topicName)
+                    .ConsumerName("discardConsumer")
+                    .SubscriptionName("test-subscription")
+                    .ReceiverQueueSize(2)
+                    .CryptoFailureAction(ConsumerCryptoFailureAction.DISCARD)
+                    .SubscribeAsync()
+
+            let! (encryptedProducer : IProducer<byte[]>) =
+                client.NewProducer()
+                    .Topic(topicName)
+                    .EnableBatching(false)
+                    .MessageEncryptor(MessageEncryptor([|"Rsa1024key1"|], ProducerKeyReader()))
+                    .CreateAsync()
+
+            let! (plainProducer : IProducer<byte[]>) =
+                client.NewProducer()
+                    .Topic(topicName)
+                    .EnableBatching(false)
+                    .CreateAsync()
+
+            // as many undecryptable messages as the consumer has permits, then one it can read
+            let! (_ : MessageId) = encryptedProducer.SendAsync(Encoding.UTF8.GetBytes "encrypted 1")
+            let! (_ : MessageId) = encryptedProducer.SendAsync(Encoding.UTF8.GetBytes "encrypted 2")
+            let! (_ : MessageId) = plainProducer.SendAsync(Encoding.UTF8.GetBytes "plain")
+
+            let cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10.0))
+            let! (message : Message<byte[]>) =
+                task {
+                    try
+                        return! consumer.ReceiveAsync(cts.Token)
+                    with :? OperationCanceledException ->
+                        return failwith "Plain message was not delivered after the undecryptable ones were discarded"
+                }
+            cts.Dispose()
+            Expect.equal (Encoding.UTF8.GetString message.Data) "plain" "payload"
+            do! consumer.AcknowledgeAsync(message.MessageId)
+
+            do! consumer.UnsubscribeAsync()
+            do! encryptedProducer.DisposeAsync()
+            do! plainProducer.DisposeAsync()
+            Log.Debug("Ended Discarded undecryptable messages return flow permits")
+        }
+
         testTask "Simple encryption send message" {
             Log.Debug("Started Simple encryption send message")
             let client = getClient ()

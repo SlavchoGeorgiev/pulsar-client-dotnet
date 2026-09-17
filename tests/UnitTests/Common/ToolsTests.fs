@@ -8,6 +8,35 @@ open Expecto.Flip
 open Pulsar.Client.Common
 
 [<Tests>]
+let postAndAsyncReplyTests =
+
+    testList "PostAndAsyncReply" [
+        test "Reply task runs continuations asynchronously" {
+            let channel = System.Threading.Channels.Channel.CreateUnbounded<TaskCompletionSource<int>>()
+            let replyTask = postAndAsyncReply channel id
+            Expect.equal "" TaskCreationOptions.RunContinuationsAsynchronously replyTask.CreationOptions
+            Expect.isNull "" replyTask.AsyncState
+        }
+
+        testTask "Continuation does not run inline in SetResult" {
+            let channel = System.Threading.Channels.Channel.CreateUnbounded<TaskCompletionSource<int>>()
+            let replyTask = postAndAsyncReply channel id
+            let insideSetResult = new System.Threading.ThreadLocal<bool>()
+            let continuation =
+                replyTask.ContinueWith(
+                    (fun (_: Task<int>) -> insideSetResult.Value),
+                    TaskContinuationOptions.ExecuteSynchronously)
+            let! (tcs: TaskCompletionSource<int>) = channel.Reader.ReadAsync()
+            insideSetResult.Value <- true
+            tcs.SetResult 1
+            insideSetResult.Value <- false
+            let! (ranInline: bool) = continuation
+            insideSetResult.Dispose()
+            Expect.isFalse "" ranInline
+        }
+    ]
+
+[<Tests>]
 let tests =
 
     testList "BitSetToLongArray" [
